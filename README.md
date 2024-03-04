@@ -9,8 +9,8 @@
     <img alt="Packagist Downloads" src="https://img.shields.io/packagist/dt/roots/acorn?label=downloads&colorB=2b3072&colorA=525ddc&style=flat-square">
   </a>
 
-  <a href="https://laravel.com/docs/9.x">
-    <img alt="Laravel v9" src="https://img.shields.io/static/v1?label=laravel&message=v9&logo=Laravel&style=flat-square&color=f9322c" />
+  <a href="https://laravel.com/docs/10.x">
+    <img alt="Laravel v10" src="https://img.shields.io/static/v1?label=laravel&message=v10&logo=Laravel&style=flat-square&color=f9322c" />
   </a>
 
   <a href="https://github.com/roots/acorn/actions/workflows/main.yml">
@@ -44,18 +44,28 @@ Acorn is a framework for integrating Laravel within WordPress.
 
 | Component                | Support | Notes |
 | ------------------------ | :-----: | ----- |
+| illuminate/bus           | 🟢 | |
 | illuminate/cache         | 🟢 | |
+| illuminate/collections   | 🟢 | |
+| illuminate/conditionable | 🟢 | |
 | illuminate/config        | 🟢 | |
 | illuminate/console       | 🟢 | |
 | illuminate/container     | 🟢 | |
 | illuminate/contracts     | 🟢 | |
 | illuminate/database      | 🟢 | |
+| illuminate/encryption    | 🟢 | |
 | illuminate/events        | 🟢 | |
 | illuminate/filesystem    | 🟢 | |
+| illuminate/hashing       | 🟢 | |
 | illuminate/http          | 🟢 | |
 | illuminate/log           | 🟢 | |
-| illuminate/routing       | 🟡 | Requires `ACORN_ENABLE_EXPERIMENTAL_ROUTER` env var |
+| illuminate/macroable     | 🟢 | |
+| illuminate/pipeline      | 🟢 | |
+| illuminate/queue         | 🟢 | |
+| illuminate/routing       | 🟢 | |
+| illuminate/session       | 🟢 | |
 | illuminate/support       | 🟢 | |
+| illuminate/validation    | 🟢 | |
 | illuminate/view          | 🟢 | |
 
 <details>
@@ -66,24 +76,13 @@ Acorn is a framework for integrating Laravel within WordPress.
 | ------------------------ | :-----: | ----- |
 | illuminate/auth          | 🔴 | |
 | illuminate/broadcasting  | 🔴 | |
-| illuminate/bus           | 🔴 | |
-| illuminate/collections   | 🔴 | |
-| illuminate/conditionable | 🔴 | |
-| illuminate/contracts     | 🔴 | |
 | illuminate/cookie        | 🔴 | |
-| illuminate/encryption    | 🔴 | |
-| illuminate/hashing       | 🔴 | |
-| illuminate/macroable     | 🔴 | |
 | illuminate/mail          | 🔴 | |
 | illuminate/notifications | 🔴 | |
 | illuminate/pagination    | 🔴 | [Available via Log1x/pagi](https://github.com/Log1x/pagi)
-| illuminate/pipeline      | 🔴 | |
-| illuminate/queue         | 🔴 | |
 | illuminate/redis         | 🔴 | |
-| illuminate/session       | 🔴 | |
 | illuminate/testing       | 🔴 | |
 | illuminate/translation   | 🔴 | |
-| illuminate/validation    | 🔴 | |
   
 </details>
 

@@ -3,6 +3,7 @@
 namespace Roots\Acorn;
 
 use Illuminate\Contracts\Foundation\Application as ApplicationContract;
+use Illuminate\Http\Response;
 use Illuminate\Support\Env;
 use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\Str;
@@ -13,28 +14,28 @@ use function get_theme_file_path;
 class Bootloader
 {
     /**
-     * Bootloader instance
+     * The Bootloader instance.
      *
      * @var static
      */
     protected static $instance;
 
     /**
-     * Application instance
+     * The Application instance.
      *
      * @var \Illuminate\Contracts\Foundation\Application
      */
     protected $app;
 
     /**
-     * Filesystem helper
+     * The Filesystem instance.
      *
      * @var \Roots\Acorn\Filesystem\Filesystem
      */
     protected $files;
 
     /**
-     * Base path for the application
+     * The application's base path.
      *
      * @var string
      */
@@ -48,7 +49,7 @@ class Bootloader
     protected $absoluteApplicationPathPrefixes = ['/', '\\'];
 
     /**
-     * Set the Bootloader instance
+     * Set the Bootloader instance.
      */
     public static function setInstance(?self $bootloader)
     {
@@ -56,7 +57,7 @@ class Bootloader
     }
 
     /**
-     * Get the Bootloader instance
+     * Get the Bootloader instance.
      *
      * @return static
      */
@@ -114,16 +115,7 @@ class Bootloader
             return class_exists('WP_CLI') ? $this->bootWpCli($app) : $this->bootConsole($app);
         }
 
-        if (Application::isExperimentalRouterEnabled()) {
-            $app->singleton(
-                \Illuminate\Contracts\Http\Kernel::class,
-                \Roots\Acorn\Http\Kernel::class
-            );
-
-            return $this->bootHttp($app);
-        }
-
-        return $this->bootWordPress($app);
+        return $this->bootHttp($app);
     }
 
     /**
@@ -155,6 +147,7 @@ class Bootloader
         );
 
         $kernel->terminate($input, $status);
+
         exit($status);
     }
 
@@ -211,64 +204,143 @@ class Bootloader
         $request = \Illuminate\Http\Request::capture();
 
         $app->instance('request', $request);
+
         Facade::clearResolvedInstance('request');
 
         $kernel->bootstrap($request);
 
-        try {
-            if (! $app->make('router')->getRoutes()->match($request)) {
-                throw new \Symfony\Component\HttpKernel\Exception\NotFoundHttpException();
-            }
-        } catch (\Exception $e) {
-            return;
+        $this->registerWordPressRoute($app);
+
+        /** @var \Illuminate\Routing\Route $route */
+        $route = $app->make('router')->getRoutes()->match($request);
+
+        if ($route->getName() !== 'wordpress_request') {
+            $this->registerRequestHandler($kernel, $request, $route);
+        } elseif (env('ACORN_ENABLE_EXPERIMENTAL_WORDPRESS_REQUEST_HANDLER', false)) {
+            $this->registerWordPressRequestHandler($kernel, $request, $route, $app->config->get('router.wordpress', ['web' => 'web', 'api' => 'api']));
         }
 
-        add_filter(
-            'do_parse_request',
-            fn ($doParse, \WP $wp, $extraQueryVars) => apply_filters('acorn/router/do_parse_request', $doParse, $wp, $extraQueryVars),
-            100,
-            3
-        );
-
-        add_action('parse_request', function () use ($kernel, $request) {
-            /** @var \Illuminate\Http\Response */
-            $response = $kernel->handle($request);
-
-            if (! $response->isServerError() && $response->status() >= 400) {
-                return;
+        add_filter('do_parse_request', function ($doParse, \WP $wp, $extraQueryVars) use ($route) {
+            if ($route->getName() === 'wordpress_request') {
+                return $doParse;
             }
 
-            $body = $response->send();
-
-            $kernel->terminate($request, $body);
-
-            exit;
-        });
+            return apply_filters('acorn/router/do_parse_request', $doParse, $wp, $extraQueryVars);
+        }, 100, 3);
     }
 
     /**
-     * Boot the Application for WordPress requests.
+     * Register the WordPress route.
      *
      * @return void
      */
-    protected function bootWordPress(ApplicationContract $app)
+    protected function registerWordPressRoute(ApplicationContract $app)
     {
-        $app->make(\Illuminate\Contracts\Http\Kernel::class)
-            ->handle(\Illuminate\Http\Request::capture());
+        $app->make('router')
+            ->any('{any?}', fn () => tap(response(''), function (Response $response) use ($app) {
+                foreach (headers_list() as $header) {
+                    [$header, $value] = explode(': ', $header, 2);
+                    if (! headers_sent()) {
+                        header_remove($header);
+                    }
+                    $response->header($header, $value);
+                }
+
+                if ($app->hasDebugModeEnabled()) {
+                    $response->header('X-Powered-By', $app->version());
+                }
+
+                $content = '';
+
+                $levels = ob_get_level();
+                for ($i = 0; $i < $levels; $i++) {
+                    $content .= ob_get_clean();
+                }
+
+                $response->setContent($content);
+            }))
+            ->where('any', '.*')
+            ->name('wordpress_request');
     }
 
     /**
-     * Get Application instance.
+     * Register the request handler.
      *
-     * @param  ApplicationContract  $app
+     * @return void
+     */
+    protected function registerRequestHandler(
+        \Illuminate\Contracts\Http\Kernel $kernel,
+        \Illuminate\Http\Request $request,
+        ?\Illuminate\Routing\Route $route
+    ) {
+        add_filter('do_parse_request', function ($doParse, \WP $wp, $extraQueryVars) use ($route) {
+            if (! $route) {
+                return $doParse;
+            }
+
+            return apply_filters('acorn/router/do_parse_request', $doParse, $wp, $extraQueryVars);
+        }, 100, 3);
+
+        add_action('parse_request', fn () => $this->handleRequest($kernel, $request));
+    }
+
+    protected function registerWordPressRequestHandler(
+        \Illuminate\Contracts\Http\Kernel $kernel,
+        \Illuminate\Http\Request $request,
+        ?\Illuminate\Routing\Route $route,
+        array $config
+    ) {
+        if (Str::contains($request->getRequestUri(), [
+            '/wp-comments-post.php',
+            '/wp-login.php',
+            '/wp-signup.php',
+            '/wp-admin/',
+        ])) {
+            return; // Let WordPress handle these requests
+        }
+
+        if (redirect_canonical(null, false)) {
+            return; // Let WordPress handle these requests
+        }
+
+        $route->middleware(preg_match('/^wp-json(\/.*)?/', $request->path()) ? $config['api'] : $config['web']);
+
+        ob_start();
+
+        remove_action('shutdown', 'wp_ob_end_flush_all', 1);
+        add_action('shutdown', fn () => $this->handleRequest($kernel, $request), 100);
+    }
+
+    /**
+     * Handle the request.
+     *
+     * @return void
+     */
+    protected function handleRequest(
+        \Illuminate\Contracts\Http\Kernel $kernel,
+        \Illuminate\Http\Request $request
+    ) {
+        $response = $kernel->handle($request);
+
+        $body = $response->send();
+
+        $kernel->terminate($request, $body);
+
+        exit((int) $response->isServerError());
+    }
+
+    /**
+     * Get the Application instance.
      */
     public function getApplication(): ApplicationContract
     {
         $this->app ??= new Application($this->basePath(), $this->usePaths());
 
+        $this->app->useEnvironmentPath($this->environmentPath());
+
         $this->app->singleton(
             \Illuminate\Contracts\Http\Kernel::class,
-            \Roots\Acorn\Kernel::class
+            \Roots\Acorn\Http\Kernel::class
         );
 
         $this->app->singleton(
@@ -292,7 +364,7 @@ class Bootloader
     }
 
     /**
-     * Get the application basepath
+     * Get the application's base path.
      */
     protected function basePath(): string
     {
@@ -313,6 +385,16 @@ class Bootloader
 
             default => dirname(__DIR__, 3)
         };
+    }
+
+    /**
+     * Get the environment file path.
+     */
+    protected function environmentPath(): string
+    {
+        return is_file($envPath = $this->files->closest($this->basePath(), '.env') ?? '')
+            ? dirname($envPath)
+            : $this->basePath();
     }
 
     /**
@@ -348,8 +430,8 @@ class Bootloader
         }
 
         return Str::startsWith($env, $this->absoluteApplicationPathPrefixes)
-                ? $env
-                : $this->basePath($env);
+            ? $env
+            : $this->basePath($env);
     }
 
     /**
@@ -408,6 +490,7 @@ class Bootloader
     protected function fallbackStoragePath()
     {
         $path = WP_CONTENT_DIR.DIRECTORY_SEPARATOR.'cache'.DIRECTORY_SEPARATOR.'acorn';
+
         $this->files->ensureDirectoryExists($path.DIRECTORY_SEPARATOR.'framework'.DIRECTORY_SEPARATOR.'cache'.DIRECTORY_SEPARATOR.'data', 0755, true);
         $this->files->ensureDirectoryExists($path.DIRECTORY_SEPARATOR.'framework'.DIRECTORY_SEPARATOR.'views', 0755, true);
         $this->files->ensureDirectoryExists($path.DIRECTORY_SEPARATOR.'framework'.DIRECTORY_SEPARATOR.'sessions', 0755, true);
